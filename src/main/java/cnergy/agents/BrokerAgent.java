@@ -3,6 +3,7 @@ package cnergy.agents;
 import jade.core.Agent;
 import jade.core.AID;
 import jade.core.behaviours.CyclicBehaviour;
+import jade.core.behaviours.TickerBehaviour;
 import jade.domain.DFService;
 import jade.domain.FIPAAgentManagement.DFAgentDescription;
 import jade.domain.FIPAAgentManagement.ServiceDescription;
@@ -21,8 +22,13 @@ public class BrokerAgent extends Agent {
         double qty;
         double price;
         boolean seller;
-        Order(long id,AID o,double q,double p,boolean bid) {id=id; owner=o; qty=q; price=p; seller=bid;}
+        int expiry;
+        Order(long Id, AID o, double q, double p, boolean sell, int exp) {id=Id; owner=o; qty=q; price=p; seller=sell; expiry=exp;}
     }
+    
+    private final Map<Long, Order> orderBook = new HashMap<>();
+    private double lastPrice = 0.06;
+    private int currentTick = 0;
 
     // priority queues
     private final PriorityQueue<Order> bids = new PriorityQueue<>(
@@ -37,9 +43,6 @@ public class BrokerAgent extends Agent {
             return c != 0 ? c : Long.compare(a.id, b.id); 
         }
     );
-
-    private final Map<Long, Order> orderBook = new HashMap<>();
-    private double lastPrice = 0.06;
 
     @Override
     protected void setup() {
@@ -57,15 +60,15 @@ public class BrokerAgent extends Agent {
                 if (msg == null) { block(); return;}
 
                 switch (msg.getPerformative()) {
-                    case ACLMessage.PROPOSE: addOrder(msg);
-                    case ACLMessage.CANCEL: cancelOrder(msg);
+                    case ACLMessage.PROPOSE: {addOrder(msg); match(); break;}
                 }
-                match();
             }
         });
-    }
-        // Auction clearing
 
+        addBehaviour(new TickerBehaviour(this, 1000) {
+            
+        });
+    }
 
     // ------- add / cancel orders ---------
     private void addOrder(ACLMessage msg) {
@@ -73,22 +76,26 @@ public class BrokerAgent extends Agent {
         String [] tokens = content.split(";");
 
         long id = Long.parseLong(tokens[0].split("=")[1]);
-        boolean seller = content.contains("side=sell");
+        boolean seller = tokens[1].contains("side=sell");
         double qty = Double.parseDouble(tokens[2].split("=")[1]);
         double price = Double.parseDouble(tokens[3].split("=")[1]);
+
+
         Order order = new Order(id, msg.getSender(), qty, price, seller);
         orderBook.put(id, order);
-
-        log("NEW %s id=%d %.1f @ %.3f from %s", seller ? "BID":"ASK", id, qty, price, msg.getSender().getLocalName());
+        if(DebuggingMode) System.out.printf("%s >> NEW %s ORDER id=%d %.1f @ %.3f from %s %n", getLocalName(), seller ? "SELL":"BUY", id, qty, price, msg.getSender().getLocalName());
     }
 
-    private void cancelOrder(ACLMessage msg) {
+    private void expireOrder() {
+
+    }
+
         String content = msg.getContent();
         long id = Long.parseLong(content.split("=")[1]);
         Order order = orderBook.remove(id); // remove order from the logbook and save it
         if(order != null) {
             (order.seller ? bids:asks).remove(order); // also remove it from the priority queues
-            log("CANCEL id=%d",id);
+            if(DebuggingMode) System.out.printf("%s >> CANCEL id=%d%n", getLocalName(), id);
         }
     }
 
@@ -103,7 +110,7 @@ public class BrokerAgent extends Agent {
             // send messages to participants
             sendFill(sell, qty, lastPrice, buy.owner);
             sendFill(buy, qty, lastPrice, sell.owner);
-
+            System.out.printf("%s >> TRADE %s %s %.1f @ %.3f%n", getLocalName(), buy.owner.getLocalName(), sell.owner.getLocalName(), qty, lastPrice);
             // trade log for GUI
             ACLMessage log = new ACLMessage(ACLMessage.INFORM);
             log.addReceiver(new AID("gui", AID.ISLOCALNAME));
@@ -120,12 +127,14 @@ public class BrokerAgent extends Agent {
         broadcastPrice();
     }
 
+    // --------- messages ----------
     private void sendFill(Order order, double qty, double price, AID from){
         ACLMessage msg = new ACLMessage(ACLMessage.ACCEPT_PROPOSAL);
         msg.addReceiver(order.owner);
         msg.setOntology("ORDER");
         msg.setContent("id="+order.id+";qty="+qty+";price="+price+";from="+from.getLocalName());
         send(msg);
+        if(DebuggingMode) System.out.printf("%s >> SENDING FILL to %s id=%d %1.f @ %.3f from %s", getLocalName(), order.owner.getLocalName(), order.id, qty, price, from.getLocalName());
     }
 
     private void broadcastPrice() {
@@ -134,6 +143,11 @@ public class BrokerAgent extends Agent {
         price.setContent("price="+lastPrice);
         price.addReceiver(getAMS());
         send(price);
+        System.out.printf("$$ CURRENT PRICE: %.3f%n", lastPrice); 
+    }
+
+    private void Reject(Order order, double qty, double price, AID from){
+
     }
 
     // --------- utils -----------
@@ -147,10 +161,5 @@ public class BrokerAgent extends Agent {
             dfd.addServices(sd);
             DFService.register(this, dfd);
         } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    private void log(String fmt, Object... args) {
-        if (DebuggingMode)
-            System.out.printf("%s » " + fmt + "%n", getLocalName(), args);
     }
 }

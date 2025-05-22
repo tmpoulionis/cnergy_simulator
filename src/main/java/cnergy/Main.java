@@ -33,16 +33,16 @@ public class Main {
                     new Object[]{ 3, 0.50, 0.50, true });  // period, solarProb, windProb, DebuggingMode
             AgentController faultInjector =
                 cc.createNewAgent("fault-injector", "cnergy.agents.FaultAgent",
-                    new Object[]{ 10, new String[]{"solar-producer", "wind-producer", "battery", "conventional-producer"}, 5, true}); // periodFault, targets, faultDuration, DebuggingMode
+                    new Object[]{ 10, new String[]{"solar-producer", "wind-producer", "conventional-producer"}, 5, true}); // periodFault, targets, faultDuration, DebuggingMode
             AgentController solar =
                 cc.createNewAgent("solar", "cnergy.agents.SolarAgent",
                     new Object[]{ 50.0, true, 100.0, 1.0, 0.4, 0.035, 0.005, 0.03, true }); // capacity, hasBatt, battCapacity, coeffSunny, coeffCloudy, baseCost, margin, alpha, DebuggingMode
             AgentController wind =
                 cc.createNewAgent("wind", "cnergy.agents.WindAgent",
-                    new Object[]{50.0, 0.045, 0.005, 0.03, 1.0, 0.2, true}); // capacity, hasBatt, battCapacity, coeffWindy, coeffCalm, baseCost, margin, alpha, DebuggingMode
+                    new Object[]{50.0, true, 100, 1.0, 0.2, 0.035, 0.005, 0.03, true}); // capacity, hasBatt, battCapacity, coeffWindy, coeffCalm, baseCost, margin, alpha, DebuggingMode
             AgentController conventional =
                 cc.createNewAgent("conventional", "cnergy.agents.ConventionalAgent",
-                    new Object[]{0.08, true});   // margin, DebuggingMode
+                    new Object[]{0.05, true});   // margin, DebuggingMode
             AgentController consumer =
                 cc.createNewAgent("consumer", "cnergy.agents.ConsumerAgent",
                     new Object[]{ 0.005, 0.03, 0.12, new double[]{1,1,1,1,1,1, 2,3,3,2,2,2, 2,2,2,2,3,5, 5,4,3,2,1,1}, true}); // margin, alpha, utilityCap, hourlyLoad, DebuggingMode

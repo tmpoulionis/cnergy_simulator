@@ -50,8 +50,8 @@ public class ConsumerAgent extends Agent{
                 ACLMessage msg = receive();
                 if (msg == null) { block(); return; }
                 switch (msg.getPerformative()) {
-                    case ACLMessage.ACCEPT_PROPOSAL: {onFill(msg, false);}
-                    case ACLMessage.REJECT_PROPOSAL: {onReject(msg);}
+                    case ACLMessage.ACCEPT_PROPOSAL: {onFill(msg, false);} break;
+                    case ACLMessage.REJECT_PROPOSAL: {onReject(msg);} break;
                 }
             }
         });
@@ -62,34 +62,23 @@ public class ConsumerAgent extends Agent{
             protected void onTick() {
                 tick++;
                 int hour = tick%24;
-        
-                // 1. cancel stale order 
-                if (openOrderId != -1) {
-                    ACLMessage cancel = new ACLMessage(ACLMessage.CANCEL);
-                    cancel.addReceiver(new AID("broker", AID.ISLOCALNAME));
-                    cancel.setOntology("ORDER");
-                    cancel.setContent("id="+openOrderId);
-                    send(cancel);
-                    backlog += openQty;
-                    openOrderId=-1; openQty=0;
-                }
 
-                // 2. calculate demand
+                // calculate demand
                 double demand = hourlyLoad[hour] + backlog;
                 if (demand<1e-6) return;
 
-                // 3. calculate price
+                // calculate price
                 double price = Math.max(0.0, utilityCap + margin);
                 openOrderId = SEQ.incrementAndGet(); // increase by 1 every time its called
                 openQty = demand;
 
-                // 4. send order
+                // send order
                 ACLMessage order = new ACLMessage(ACLMessage.PROPOSE);
                 order.addReceiver(new AID("broker", AID.ISLOCALNAME));
                 order.setOntology("ORDER");
                 order.setContent("id="+openOrderId+";side=buy;qty="+openQty+";price="+price);
                 send(order);
-                log("BID id=%d qty=%.1f kWh @ %.3f",openOrderId, openQty, price);
+                if(DebuggingMode) System.out.printf("%s >> BUY ORDER id=%d qty=%.1f kWh @ %.3f%n", getLocalName(), openOrderId, openQty, price);
             }
         });
     }
@@ -110,7 +99,7 @@ public class ConsumerAgent extends Agent{
         double util = qty / (qty + openQty + 1e-9);
         margin += alpha*(0.9 - util); // satisfied -> decrease margin (pay less)
         margin = Math.max(0.005, Math.min(0.05, margin));
-        log("FILL %.1f kWh @ %.3f | backlog %.1f | new margin %.3f", qty, price, backlog, margin);
+        if(DebuggingMode) System.out.printf("%s >> FILL %.1f kWh @ %.3f | backlog %.1f | new margin %.3f%n", getLocalName(), qty, price, backlog, margin);
     }
 
     private void onReject(ACLMessage msg) {
@@ -122,7 +111,7 @@ public class ConsumerAgent extends Agent{
         backlog += openQty;
         openOrderId=-1; openQty=0;
         margin = Math.max(0.005, margin + 0.002);   // pay a bit more next time
-        log("REJECT id=%d | backlog %.1f | margin %.3f", id, backlog, margin);
+        if(DebuggingMode) System.out.printf("%s >> REJECTED id=%d | backlog %.1f | margin %.3f%n", getLocalName(), id, backlog, margin);
     }
 
     private void register(String type) {
@@ -135,12 +124,6 @@ public class ConsumerAgent extends Agent{
             dfd.addServices(sd);
             DFService.register(this, dfd);
         } catch (Exception e) { e.printStackTrace(); }
-    }
-
-        /* print format */
-    private void log(String fmt, Object... args) {
-        if (DebuggingMode)                                // only print when debug=true
-            System.out.printf("%s » " + fmt + "%n", getLocalName(), args);
     }
 }
 

@@ -36,7 +36,7 @@ public class TraderAgent extends Agent {
             orderSize = Double.parseDouble(args[2].toString());
             DebuggingMode = Boolean.parseBoolean(args[3].toString());
         }
-        System.out.printf("- [%s] UP - {margin: %.2f | posLimit: %.2f | orderSize: %.2f}", margin, posLimit, orderSize);
+        System.out.printf("- [%s] UP - {margin: %.2f | posLimit: %.2f | orderSize: %.2f}%n", getLocalName(), margin, posLimit, orderSize);
 
     // --------- message handling ----------
         addBehaviour(new CyclicBehaviour(this) {
@@ -44,8 +44,8 @@ public class TraderAgent extends Agent {
                 ACLMessage msg = receive();
                 if (msg == null) {block(); return;}
                 switch(msg.getPerformative()) {
-                    case ACLMessage.ACCEPT_PROPOSAL: onFill(msg);
-                    case ACLMessage.INFORM: onInform(msg);
+                    case ACLMessage.ACCEPT_PROPOSAL: onFill(msg); break;
+                    case ACLMessage.INFORM: onInform(msg); break;
                 }
             }    
         });
@@ -60,7 +60,7 @@ public class TraderAgent extends Agent {
                 if (position < posLimit) {
                     double bid = Math.max(0, lastPrice - margin);
                     bidId = sendOrder("buy", orderSize, bid);
-                    log("BID id=%d %.1f @ %.3f", bidId, orderSize, bid);
+                    if(DebuggingMode) System.out.printf("%s >> BID id=%d %.1f @ %.3f%n", getLocalName(), bidId, orderSize, bid);
                 }
             }
         });
@@ -74,6 +74,8 @@ public class TraderAgent extends Agent {
         msg.setOntology("ORDER");
         msg.setContent("id="+id+";side="+side+";qty="+qty+";price="+price);
         send(msg);
+
+        if(DebuggingMode) System.out.printf("%s >> %s ORDER id=%d qty=%.2f kWh @ %.3f%n", getLocalName(), side == "seller" ? "SELL" : "BUY", id, qty, price);
         return id;
     }
 
@@ -96,16 +98,16 @@ public class TraderAgent extends Agent {
         String from = tokens[3].split("=")[1];
         boolean isBuy = (id==bidId);
         if(isBuy) position += qty; else position -= qty;
-        log("FILL %s %.1f @ %.4f from %s | inv=%.1f", isBuy?"BUY":"SELL", qty, price, from, position);
+        if(DebuggingMode) System.out.printf("%s >> FILL %s %.1f @ %.4f from %s | inv=%.1f%n", getLocalName(), isBuy?"BUY":"SELL", qty, price, from, position);
 
-        margin = Math.max(0.002, margin * 0.999);
+        margin = Math.max(0.002, margin);
     }
 
     private void onInform(ACLMessage msg) {
         if (msg.getOntology().equals("PRICE_TICK")) {
             String content = msg.getContent();
             lastPrice = Double.parseDouble(content.split("=")[1]);
-            log("Price tick: %.2f%n", lastPrice);
+            if(DebuggingMode) System.out.printf("%s >> Price tick: %.2f%n", getLocalName(), lastPrice);
         }
     }
     
@@ -121,11 +123,5 @@ public class TraderAgent extends Agent {
             dfd.addServices(sd);
             DFService.register(this, dfd);
         } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    /* print format */
-    private void log(String fmt, Object... args) {
-        if (DebuggingMode)                                // only print when debug=true
-            System.out.printf("%s » " + fmt + "%n", getLocalName(), args);
     }
 }

@@ -41,8 +41,8 @@ public class ConventionalAgent extends Agent {
                 ACLMessage msg = receive();
                 if (msg == null) {block(); return;}
                 switch(msg.getPerformative()) {
-                    case ACLMessage.ACCEPT_PROPOSAL: onFill(msg);
-                    case ACLMessage.INFORM: onInform(msg);
+                    case ACLMessage.ACCEPT_PROPOSAL: onFill(msg); break;
+                    case ACLMessage.INFORM: onInform(msg); break;
                 }
             }
         });
@@ -54,36 +54,26 @@ public class ConventionalAgent extends Agent {
                 if (isFaulty) {
                     if (faultDuration > 0) {
                         faultDuration -= 1;
-                        log("Faulty... %.2f seconds remaining%n", faultDuration);
+                        if(DebuggingMode) System.out.printf("%s >> Faulty... %.2f seconds remaining%n", getLocalName(), faultDuration);
                         return;
                     } else {
                         isFaulty = false;
-                        log("Recovered!");
+                        if(DebuggingMode) System.out.printf("%s >> Recovered!%n", getLocalName());
                     }
                 }
 
-                // 1. cancel stale order
-                if (openOrderId!=-1) {
-                    ACLMessage cancel = new ACLMessage(ACLMessage.CANCEL);
-                    cancel.addReceiver(new AID("broker", AID.ISLOCALNAME));
-                    cancel.setOntology("ORDER");
-                    cancel.setContent("id="+openOrderId);
-                    send(cancel);
-                    openOrderId = -1;
-                }
-
-                // 2. calculate price
+                // calculate price
                 double price = lastPrice + margin;
                 
-                // 3. send order
+                // send order
                 openOrderId = SEQ.incrementAndGet();
 
-                ACLMessage offer = new ACLMessage(ACLMessage.PROPOSE);
-                offer.addReceiver(new AID("broker", AID.ISLOCALNAME));
-                offer.setOntology("ORDER");
-                offer.setContent("id="+openOrderId+";side=sell;qty="+Double.POSITIVE_INFINITY+";price="+price);
-                send(offer);
-                log("OFFER id=%d <inf> kWh @ %.3f", openOrderId, price);
+                ACLMessage order = new ACLMessage(ACLMessage.PROPOSE);
+                order.addReceiver(new AID("broker", AID.ISLOCALNAME));
+                order.setOntology("ORDER");
+                order.setContent("id="+openOrderId+";side=sell;qty="+Double.POSITIVE_INFINITY+";price="+price);
+                send(order);
+                if(DebuggingMode) System.out.printf("%s >> SELL ORDER id=%d <inf> kWh @ %.3f%n", getLocalName(), openOrderId, price);
             }
         });
     }
@@ -97,7 +87,7 @@ public class ConventionalAgent extends Agent {
         double qty = Double.parseDouble(tokens[1].split("=")[1]);
         double price = Double.parseDouble(tokens[2].split("=")[1]);
         String from = tokens[3].split("=")[1];
-        log("FILLED %.1f kWh @ %.3f (backup)", qty, price);
+        if(DebuggingMode) System.out.printf("%s >> FILLED %.1f kWh @ %.3f (backup) from %s%n", getLocalName(), qty, price, from);
     }
 
     private void onInform(ACLMessage msg) {
@@ -109,13 +99,14 @@ public class ConventionalAgent extends Agent {
                 // Update last clearing price                
                 content = msg.getContent();
                 lastPrice = Double.parseDouble(content.split("=")[1]);
-                log("Price tick: %.2f%n", lastPrice);
+                if(DebuggingMode) System.out.printf("%s >> Price tick: %.2f%n", getLocalName(), lastPrice);
                 break;
             case "FAULT":
                 content = msg.getContent();
                 tokens = content.split(";");
                 faultDuration = Double.parseDouble(tokens[0].split("=")[1]);
-                log("Fault occured | duration: %d", faultDuration);
+                isFaulty = true;
+                if(DebuggingMode) System.out.printf("%s >> Fault occured | duration: %.2f%n", getLocalName(), faultDuration);
                 break;
         }
     }
@@ -132,11 +123,5 @@ public class ConventionalAgent extends Agent {
             dfd.addServices(sd);
             DFService.register(this, dfd);
         } catch (Exception e) { e.printStackTrace(); }
-    }
-
-    /* print format */
-    private void log(String fmt, Object... args) {
-        if (DebuggingMode)                                // only print when debug=true
-            System.out.printf("%s » " + fmt + "%n", getLocalName(), args);
     }
 }
