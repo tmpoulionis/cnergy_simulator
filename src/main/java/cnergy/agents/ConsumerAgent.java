@@ -9,8 +9,10 @@ import jade.domain.FIPAAgentManagement.DFAgentDescription;
 import jade.domain.FIPAAgentManagement.ServiceDescription;
 import jade.lang.acl.ACLMessage;
 
+import java.util.concurrent.atomic.AtomicLong;
+
 public class ConsumerAgent extends Agent{
-    // ------------------------ Parameters ------------------------
+    // ------------------------ parameters ------------------------
     private double margin = 0.005; // initial margin
     private double alpha = 0.03; // learning rate
     private double utilityCap = 0.12; // max euros/kWh willing to pay
@@ -18,10 +20,16 @@ public class ConsumerAgent extends Agent{
         1,1,1,1,1,1, 2,3,3,2,2,2,
         2,2,2,2,3,5, 5,4,3,2,1,1
     };
-
     private boolean DebuggingMode = false; // Debug mode
 
+    // --------------------- internal state ------------------------
     private int tick = 0;
+    private double backlog = 0; // unmet demand carried forward
+
+    private static final AtomicLong SEQ = new AtomicLong();
+    private long openOrderId = -1;
+    private double openQty = 0;
+
     @Override
     protected void setup() {
         register("consumer");
@@ -41,7 +49,10 @@ public class ConsumerAgent extends Agent{
             public void action() {
                 ACLMessage msg = receive();
                 if (msg == null) { block(); return; }
-                updateInternalState(msg);
+                switch (msg.getPerformative()) {
+                    case ACLMessage.ACCEPT_PROPOSAL: {onFill(msg, false);}
+                    case ACLMessage.REJECT_PROPOSAL: {onReject(msg);}
+                }
             }
         });
 
@@ -50,35 +61,68 @@ public class ConsumerAgent extends Agent{
             @Override
             protected void onTick() {
                 tick++;
-                int hour = tick % 24;
-                double need = hourlyLoad[hour];
-                double bidPrice = utilityCap - margin; // max price willing to pay
+                int hour = tick%24;
+        
+                // 1. cancel stale order 
+                if (openOrderId != -1) {
+                    ACLMessage cancel = new ACLMessage(ACLMessage.CANCEL);
+                    cancel.addReceiver(new AID("broker", AID.ISLOCALNAME));
+                    cancel.setOntology("ORDER");
+                    cancel.setContent("id="+openOrderId);
+                    send(cancel);
+                    backlog += openQty;
+                    openOrderId=-1; openQty=0;
+                }
 
-                ACLMessage bid = new ACLMessage(ACLMessage.INFORM);
-                bid.setOntology("BID");
-                bid.setContent("qty=" + need + ";price=" + bidPrice);
-                bid.addReceiver(new AID("operator", AID.ISLOCALNAME));
-                send(bid);
-                /*DEBUG*/ if (DebuggingMode == true) System.out.printf("%s - Sending bid: %.2f kWh @ %.2f euro/kWh %n", getLocalName(), need, bidPrice);
+                // 2. calculate demand
+                double demand = hourlyLoad[hour] + backlog;
+                if (demand<1e-6) return;
+
+                // 3. calculate price
+                double price = Math.max(0.0, utilityCap + margin);
+                openOrderId = SEQ.incrementAndGet(); // increase by 1 every time its called
+                openQty = demand;
+
+                // 4. send order
+                ACLMessage order = new ACLMessage(ACLMessage.PROPOSE);
+                order.addReceiver(new AID("broker", AID.ISLOCALNAME));
+                order.setOntology("ORDER");
+                order.setContent("id="+openOrderId+";side=buy;qty="+openQty+";price="+price);
+                send(order);
+                log("BID id=%d qty=%.1f kWh @ %.3f",openOrderId, openQty, price);
             }
         });
     }
 
     // ---------------------------- FUNCTIONS -------------------------------------
-    private void updateInternalState(ACLMessage msg) {
-        if (msg.getOntology() != "AWARD") {return;}
-        String content = "";
-        String [] tokens = null;
+    private void onFill(ACLMessage msg, boolean seller) {
+        String content = msg.getContent();
+        String [] tokens = content.split(";");
+        long id = Long.parseLong(tokens[0].split("=")[1]);
+        if(id!=openOrderId) return;
+        double qty = Double.parseDouble(tokens[2].split("=")[1]);
+        double price = Double.parseDouble(tokens[3].split("=")[1]);
 
-        content = msg.getContent();
-        tokens = content.split(";");
-        double won = Double.parseDouble(tokens[0].split("=")[1]);
-        double price = Double.parseDouble(tokens[1].split("=")[1]);
-        double needed = hourlyLoad[(tick-1) % 24];
-        double util = needed < 1e-6 ? 0.0 : won/needed; // 0...1
-        margin += alpha * (util - 0.9); // if oversupplied, lower margin
-        margin = Math.max(0.005, Math.min(0.05, margin)); // Clamp margin to [0.005, 0.05]
-        /*DEBUG*/ if (DebuggingMode == true) System.out.printf("%s - Award received: %.2f kWh @ %.2f euro/kWh | Needed: %.2f| Margin updated: %.2f%n", getLocalName(), won, price, needed, margin);
+        openQty -= qty;
+        backlog = Math.max(0, backlog - qty);
+        if(openQty < 1e-6) openOrderId = -1;
+
+        double util = qty / (qty + openQty + 1e-9);
+        margin += alpha*(0.9 - util); // satisfied -> decrease margin (pay less)
+        margin = Math.max(0.005, Math.min(0.05, margin));
+        log("FILL %.1f kWh @ %.3f | backlog %.1f | new margin %.3f", qty, price, backlog, margin);
+    }
+
+    private void onReject(ACLMessage msg) {
+        String content = msg.getContent();
+        String[] tokens = content.split(";");
+        long id = Long.parseLong(tokens[0].split("=")[1]);
+        if(id != openOrderId) return;
+
+        backlog += openQty;
+        openOrderId=-1; openQty=0;
+        margin = Math.max(0.005, margin + 0.002);   // pay a bit more next time
+        log("REJECT id=%d | backlog %.1f | margin %.3f", id, backlog, margin);
     }
 
     private void register(String type) {
@@ -93,6 +137,11 @@ public class ConsumerAgent extends Agent{
         } catch (Exception e) { e.printStackTrace(); }
     }
 
+        /* print format */
+    private void log(String fmt, Object... args) {
+        if (DebuggingMode)                                // only print when debug=true
+            System.out.printf("%s » " + fmt + "%n", getLocalName(), args);
+    }
 }
 
 

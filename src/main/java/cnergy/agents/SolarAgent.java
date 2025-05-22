@@ -13,10 +13,11 @@ import java.util.concurrent.atomic.AtomicLong;
 public class SolarAgent extends Agent {
     // ------------------------ Parameters ------------------------
     private double capacity = 50.0; // Total kW capacity
+    private boolean hasBattery = true;
+    private double battCapacity = 100;
     private double coeffSunny = 1.0;
     private double coeffCloudy = 0.4;
-    private boolean hasStorage = true;
-    private double storageCapacity = 100;
+
 
     private double baseCost = 0.035; // euro/kWh
     private double margin = 0.005; // Initial margin
@@ -27,7 +28,6 @@ public class SolarAgent extends Agent {
     // ------------------------- Internal state ------------------------
     private double production = 0.0; 
     private double lastClearingPrice = 0.0;
-    private double lastOfferQty = 0.0;
     private String solarToken = "";
     private String timeToken = "";
     private double faultDuration = 0.0;
@@ -45,16 +45,16 @@ public class SolarAgent extends Agent {
         Object[] args = getArguments();
         if (args != null && args.length > 0) {
             capacity = Double.parseDouble(args[0].toString());
-            hasStorage = Boolean.parseBoolean(args[1].toString());
-            storageCapacity = Double.parseDouble(args[2].toString());
-            coeffSunny = Double.parseDouble(args[4].toString());
-            coeffCloudy = Double.parseDouble(args[5].toString());
-            baseCost = Double.parseDouble(args[1].toString());
-            margin = Double.parseDouble(args[2].toString());
-            alpha = Double.parseDouble(args[3].toString());
-            DebuggingMode = Boolean.parseBoolean(args[6].toString());
+            hasBattery = Boolean.parseBoolean(args[1].toString());
+            battCapacity = Double.parseDouble(args[2].toString());
+            coeffSunny = Double.parseDouble(args[3].toString());
+            coeffCloudy = Double.parseDouble(args[4].toString());
+            baseCost = Double.parseDouble(args[5].toString());
+            margin = Double.parseDouble(args[6].toString());
+            alpha = Double.parseDouble(args[7].toString());
+            DebuggingMode = Boolean.parseBoolean(args[8].toString());
         }
-        System.out.printf("- [%s] (solar) up! {capacity: %.2f | hasStorage: %b | storageCapacity: %.2f | baseCost: %.2f | margin: %.2f | alpha: %.2f | coeffSunny: %.2f | coeffCloudy: %.2f}%n", getLocalName(), capacity, hasStorage, storageCapacity, baseCost, margin, alpha, coeffSunny, coeffCloudy);
+        System.out.printf("- [%s]  UP - {capacity: %.2f | hasBattery: %b | battCapacity: %.2f | baseCost: %.2f | margin: %.2f | alpha: %.2f | coeffSunny: %.2f | coeffCloudy: %.2f}%n", getLocalName(), capacity, hasBattery, battCapacity, baseCost, margin, alpha, coeffSunny, coeffCloudy);
 
         // --------------------- message handling -----------------------
         addBehaviour(new CyclicBehaviour(this) {
@@ -64,13 +64,13 @@ public class SolarAgent extends Agent {
                 if (msg == null) { block(); return; }
                 switch (msg.getPerformative()) {
                     case ACLMessage.INFORM: onInform(msg); break;
-                    case ACLMessage.ACCEPT_PROPOSAL: onFill(msg. true); break;
+                    case ACLMessage.ACCEPT_PROPOSAL: onFill(msg, true); break;
                     case ACLMessage.REJECT_PROPOSAL: onReject(msg); break;
                 }
             }
         });
 
-        // ------------------------ mourly cicle ------------------------------
+        // ------------------------ hourly cicle ------------------------------
         addBehaviour(new TickerBehaviour(this, 1000) {
             @Override
             protected void onTick() {
@@ -78,11 +78,11 @@ public class SolarAgent extends Agent {
                 if (isFaulty) {
                     if (faultDuration > 0) {
                         faultDuration -= 1;
-                        /*DEBUG*/ if (DebuggingMode == true) {System.out.printf("%s - Faulty... %.2f seconds remaining%n", getLocalName(), faultDuration);}
+                        log("Faulty... %.2f seconds remaining", faultDuration);
                         return;
                     } else {
                         isFaulty = false;
-                        /*DEBUG*/ if (DebuggingMode == true) {System.out.printf("%s - Recovered!", getLocalName());}
+                        log("Recovered!");
                     }
                 }
 
@@ -93,17 +93,17 @@ public class SolarAgent extends Agent {
                     cancel.setOntology("ORDER");
                     cancel.setContent("id="+openOrderId);
                     send(cancel);
-                    soc = Math.min(storageCapacity, soc + openQty);
+                    soc = Math.min(battCapacity, soc + openQty);
                     openOrderId = -1; openQty = 0;
                 }
 
                 // 2. produce energy
-                if (timeToken.equals("NIGHT")) {production = 0.0; return;}
-                double factor = "SUNNY".equals(solarToken) ? coeffSunny : coeffCloudy;
-                production = capacity * factor;
-                production = Math.min(production, storageCapacity - soc);
-                /*DEBUG*/ if (DebuggingMode == true) {System.out.printf("%s - Generating.. %.2f kWh %n", getLocalName(), production);}
-
+                if (timeToken.equals("DAY")) {
+                    double factor = "SUNNY".equals(solarToken) ? coeffSunny : coeffCloudy;
+                    production = capacity * factor;
+                    production = Math.min(production, battCapacity - soc);
+                    log("Generating.. %.2f kWh %n", production);
+                } else {production = 0;}
 
                 // 3. calculate price
                 double available = production + soc;
@@ -112,22 +112,21 @@ public class SolarAgent extends Agent {
                 price = Math.max(price, lastClearingPrice - 0.02); // avoid undercutting the market
                 
                 // 4. send order
-                soc = 0;
                 openQty = available;
                 openOrderId = SEQ.incrementAndGet();
 
                 ACLMessage offer = new ACLMessage(ACLMessage.PROPOSE);
                 offer.addReceiver(new AID("broker", AID.ISLOCALNAME));
                 offer.setOntology("ORDER");
-                offer.setContent("id="+openOrderId+"type=sell;qty="+available+";price="+price);
+                offer.setContent("id="+openOrderId+"side=sell;qty="+available+";price="+price);
                 send(offer);
-                /*DEBUG*/ if (DebuggingMode == true) {System.out.printf("%s - OFFER id=%d qty=%.1f kWh @ %.3f", openOrderId, available, price);}
+                log("OFFER id=%d qty=%.2f kWh @ %.3f", openOrderId, available, price);
             }
         });
     }
 
     // ---------------------------- FUNCTIONS -------------------------------------
-    private void updateInternalState(ACLMessage msg) {
+    private void onInform(ACLMessage msg) {
         String content = "";
         String [] tokens = null;
 
@@ -138,32 +137,51 @@ public class SolarAgent extends Agent {
                 tokens = content.split(";");
                 solarToken = tokens[0].split("=")[1];
                 timeToken = tokens[2].split("=")[1];
-                /*DEBUG*/ if (DebuggingMode == true) {System.out.printf("%s - Weather update: %s | %s%n", getLocalName(), solarToken, timeToken);}
+                log("Weather update: %s | %s%n", solarToken, timeToken);
                 break;
             case "PRICE_TICK":
                 // Update last clearing price                
                 content = msg.getContent();
                 lastClearingPrice = Double.parseDouble(content.split("=")[1]);
-                /*DEBUG*/ if (DebuggingMode == true) {System.out.printf("%s - Price tick: %.2f%n", getLocalName(), lastClearingPrice);}
-                break;
-            case "AWARD":
-                // Pricing logic - margin calculation
-                content = msg.getContent();
-                tokens = content.split(";");
-                lastClearingPrice = Double.parseDouble(tokens[1].split("=")[1]);
-                double won = Double.parseDouble(tokens[0].split("=")[1]);
-                double util = lastOfferQty < 1e-6 ? 0.0 : won/lastOfferQty; // 0...1
-                margin += alpha * (0.9 - util);
-                margin = Math.max(-0.02, Math.min(0.02, margin)); // Clamp margin to [-0.2, 0.2]
-                /*DEBUG*/ if (DebuggingMode == true) {System.out.printf("%s - Award received: %.2f kWh @ %.2f euro/kWh | Margin updated: %.2f%n", getLocalName(), won, lastClearingPrice, margin);}
+                log("Price tick: %.2f%n", lastClearingPrice);
                 break;
             case "FAULT":
                 content = msg.getContent();
                 tokens = content.split(";");
                 faultDuration = Double.parseDouble(tokens[0].split("=")[1]);
-            }
+                log("Fault occured | duration: %d", faultDuration);
+                break;
+        }
     }
 
+    private void onFill(ACLMessage msg, boolean seller) {
+        String content = msg.getContent();
+        String [] tokens = content.split(";");
+        long id = Long.parseLong(tokens[0].split("=")[1]);
+        if(id != openOrderId) return; // ignore old fills
+        double qty = Double.parseDouble(tokens[1].split("=")[1]);
+        double price = Double.parseDouble(tokens[2].split("=")[1]);
+        String from = tokens[3].split("=")[1];
+
+        openQty -= qty;
+        if(openQty < 1e-6) openOrderId=-1;
+
+        double util = (qty)/(qty + openQty + 1e-8);
+        margin += alpha*(util - 0.9); // satisfied -> increase margin (charge more)
+        margin = Math.max(-0.02, Math.min(0.02, margin));
+        log("FILLED %.1f kWh @ %.3f from %s | new margin %.3f", qty, price, from, margin);
+    }
+
+    private void onReject(ACLMessage msg) {
+        String content = msg.getContent();
+        String[] tokens = content.split(";");
+        long id = Long.parseLong(tokens[0].split("=")[1]);
+        soc = Math.min(battCapacity, soc + openQty);
+        openOrderId=-1; openQty=0;
+        log("REJECTED id=%d → energy returned to battery (SoC=%.0f %d%)" ,id,soc, soc/battCapacity*100);
+    }
+
+    // -------- utilities ----------
     /** register this agent under a market service-type */
     private void register(String type) {
         try {
@@ -176,4 +194,11 @@ public class SolarAgent extends Agent {
             DFService.register(this, dfd);
         } catch (Exception e) { e.printStackTrace(); }
     }
+
+    /* print format */
+    private void log(String fmt, Object... args) {
+        if (DebuggingMode)                                // only print when debug=true
+            System.out.printf("%s » " + fmt + "%n", getLocalName(), args);
+    }
+
 }

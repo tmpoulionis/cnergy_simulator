@@ -1,10 +1,9 @@
-cnergy\agents\WeatherAgent$1.class
-cnergy\agents\SolarAgent$1.class
 cnergy\agents\WindAgent$1.class
+cnergy\agents\WeatherAgent$1.class
 cnergy\agents\WindAgent.class
 cnergy\agents\SolarAgent.class
-cnergy\Main.class
 cnergy\agents\SolarAgent$2.class
 cnergy\agents\WeatherAgent.class
 cnergy\agents\WindAgent$2.class
 cnergy\App.class
+cnergy\agents\SolarAgent$1.class
