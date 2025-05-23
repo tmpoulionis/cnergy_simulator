@@ -9,7 +9,6 @@ import jade.domain.FIPAAgentManagement.ServiceDescription;
 import jade.lang.acl.ACLMessage;
 import jade.core.AID;
 
-import java.util.concurrent.atomic.AtomicLong;
 public class SolarAgent extends Agent {
     // ------------------------ Parameters ------------------------
     private double capacity = 50.0; // Total kW capacity
@@ -33,10 +32,6 @@ public class SolarAgent extends Agent {
     private double faultDuration = 0.0;
     private double soc = 0.0;
     private boolean isFaulty = false;
-
-    // ------------------ order tracking --------------------------
-    private static final AtomicLong SEQ = new AtomicLong();
-    private long openOrderId = -1; // -1 means no order is live
     private double openQty = 0; 
 
     @Override
@@ -102,14 +97,12 @@ public class SolarAgent extends Agent {
                 
                 // send order
                 openQty = available;
-                openOrderId = SEQ.incrementAndGet();
-
                 ACLMessage order = new ACLMessage(ACLMessage.PROPOSE);
                 order.addReceiver(new AID("broker", AID.ISLOCALNAME));
                 order.setOntology("ORDER");
-                order.setContent("id="+openOrderId+";side=sell;qty="+available+";price="+price);
+                order.setContent("qty="+available+";price="+price+";side=sell");
                 send(order);
-                if(DebuggingMode) System.out.printf("%s >> SELL ORDER id=%d qty=%.2f kWh @ %.3f%n", getLocalName(), openOrderId, available, price);
+                if(DebuggingMode) System.out.printf("%s >> SELL ORDER qty=%.2f kWh @ %.3f%n", getLocalName(), available, price);
             }
         });
     }
@@ -147,28 +140,29 @@ public class SolarAgent extends Agent {
     private void onFill(ACLMessage msg, boolean seller) {
         String content = msg.getContent();
         String [] tokens = content.split(";");
+
         long id = Long.parseLong(tokens[0].split("=")[1]);
-        if(id != openOrderId) return; // ignore old fills
         double qty = Double.parseDouble(tokens[1].split("=")[1]);
         double price = Double.parseDouble(tokens[2].split("=")[1]);
         String from = tokens[3].split("=")[1];
 
         openQty -= qty;
-        if(openQty < 1e-6) openOrderId=-1;
+        if(openQty <= 1e-6) {openQty = 0;}
 
         double util = (qty)/(qty + openQty + 1e-8);
         margin += alpha*(util - 0.9); // satisfied -> increase margin (charge more)
         margin = Math.max(-0.02, Math.min(0.02, margin));
-        if(DebuggingMode) System.out.printf("%s >> FILLED %.1f kWh @ %.3f from %s | new margin %.3f%n", getLocalName(), qty, price, from, margin);
+        if(DebuggingMode) System.out.printf("%s >> FILLED order id=%d %.1f kWh @ %.3f from %s | new margin %.3f%n", getLocalName(), id, qty, price, from, margin);
     }
 
     private void onReject(ACLMessage msg) {
         String content = msg.getContent();
         String[] tokens = content.split(";");
+        
         long id = Long.parseLong(tokens[0].split("=")[1]);
         soc = Math.min(battCapacity, soc + openQty);
-        openOrderId=-1; openQty=0;
-        if(DebuggingMode) System.out.printf("%s >> REJECTED id=%d → energy returned to battery (SoC=%.0f %d%)%n", getLocalName(), id, soc, soc/battCapacity*100);
+        openQty=0;
+        if(DebuggingMode) System.out.printf("%s >> REJECTED id=%d -> energy returned to battery (SoC=%.0f %.1f%%)%n", getLocalName(), id, soc, soc/battCapacity*100);
     }
 
     // -------- utilities ----------

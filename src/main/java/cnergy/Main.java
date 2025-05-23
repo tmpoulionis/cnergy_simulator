@@ -46,9 +46,9 @@ public class Main {
             AgentController consumer =
                 cc.createNewAgent("consumer", "cnergy.agents.ConsumerAgent",
                     new Object[]{ 0.005, 0.03, 0.12, new double[]{1,1,1,1,1,1, 2,3,3,2,2,2, 2,2,2,2,3,5, 5,4,3,2,1,1}, true}); // margin, alpha, utilityCap, hourlyLoad, DebuggingMode
-            AgentController trader =
-                cc.createNewAgent("trader", "cnergy.agents.TraderAgent",
-                    new Object[]{ 0.010, 10.0, 50.0, true }); // margin, posLimit, orderSize, DebuggingMode
+            //AgentController trader =
+            //    cc.createNewAgent("trader", "cnergy.agents.TraderAgent",
+            //        new Object[]{ 0.010, 10.0, 50.0, true }); // margin, posLimit, orderSize, DebuggingMode
 
             /* ============ START ============ */
             broker.start();
@@ -58,7 +58,7 @@ public class Main {
             wind.start();
             conventional.start();
             consumer.start();
-            trader.start();
+            //trader.start();
 
             System.out.println("==========================================================");
 

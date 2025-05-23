@@ -23,12 +23,12 @@ public class BrokerAgent extends Agent {
         double price;
         boolean seller;
         int expiry;
-        Order(long Id, AID o, double q, double p, boolean sell, int exp) {id=Id; owner=o; qty=q; price=p; seller=sell; expiry=exp;}
+        Order(long Id, AID o, double q, double p, boolean sell, int exp) {id=Id; owner=o; qty=q; price=p; seller=sell;}
     }
     
     private final Map<Long, Order> orderBook = new HashMap<>();
     private double lastPrice = 0.06;
-    private int currentTick = 0;
+    private int tick = 0;
 
     // priority queues
     private final PriorityQueue<Order> bids = new PriorityQueue<>(
@@ -64,9 +64,12 @@ public class BrokerAgent extends Agent {
                 }
             }
         });
-
+    
         addBehaviour(new TickerBehaviour(this, 1000) {
-            
+            public void onTick() {
+                tick++;
+                expireOrder();
+            }
         });
     }
 
@@ -79,23 +82,26 @@ public class BrokerAgent extends Agent {
         boolean seller = tokens[1].contains("side=sell");
         double qty = Double.parseDouble(tokens[2].split("=")[1]);
         double price = Double.parseDouble(tokens[3].split("=")[1]);
+        int expiry = tick + 1;
 
-
-        Order order = new Order(id, msg.getSender(), qty, price, seller);
+        Order order = new Order(id, msg.getSender(), qty, price, seller, expiry);
         orderBook.put(id, order);
         if(DebuggingMode) System.out.printf("%s >> NEW %s ORDER id=%d %.1f @ %.3f from %s %n", getLocalName(), seller ? "SELL":"BUY", id, qty, price, msg.getSender().getLocalName());
     }
 
     private void expireOrder() {
-
-    }
-
-        String content = msg.getContent();
-        long id = Long.parseLong(content.split("=")[1]);
-        Order order = orderBook.remove(id); // remove order from the logbook and save it
-        if(order != null) {
-            (order.seller ? bids:asks).remove(order); // also remove it from the priority queues
-            if(DebuggingMode) System.out.printf("%s >> CANCEL id=%d%n", getLocalName(), id);
+        Iterator<Order> it = orderBook.values().iterator();
+        while (it.hasNext()) {
+            Order order = it.next();
+            if (order.expiry <= tick) {
+                ACLMessage rej = new ACLMessage(ACLMessage.REJECT_PROPOSAL);
+                rej.addReceiver(order.owner);
+                rej.setOntology("ORDER");
+                rej.setContent("id="+order.id);
+                send(rej);
+                it.remove();
+                if(DebuggingMode) System.out.printf("%s >> ORDER EXPIRED -> %s - id=%d %n",getLocalName(), order.owner.getLocalName(), order.id);
+            }
         }
     }
 
@@ -110,7 +116,7 @@ public class BrokerAgent extends Agent {
             // send messages to participants
             sendFill(sell, qty, lastPrice, buy.owner);
             sendFill(buy, qty, lastPrice, sell.owner);
-            System.out.printf("%s >> TRADE %s %s %.1f @ %.3f%n", getLocalName(), buy.owner.getLocalName(), sell.owner.getLocalName(), qty, lastPrice);
+            System.out.printf("%s >> TRADE %s <--> %s %.1f @ %.3f%n", getLocalName(), buy.owner.getLocalName(), sell.owner.getLocalName(), qty, lastPrice);
             // trade log for GUI
             ACLMessage log = new ACLMessage(ACLMessage.INFORM);
             log.addReceiver(new AID("gui", AID.ISLOCALNAME));
@@ -144,10 +150,6 @@ public class BrokerAgent extends Agent {
         price.addReceiver(getAMS());
         send(price);
         System.out.printf("$$ CURRENT PRICE: %.3f%n", lastPrice); 
-    }
-
-    private void Reject(Order order, double qty, double price, AID from){
-
     }
 
     // --------- utils -----------

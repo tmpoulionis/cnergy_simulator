@@ -9,8 +9,6 @@ import jade.domain.FIPAAgentManagement.DFAgentDescription;
 import jade.domain.FIPAAgentManagement.ServiceDescription;
 import jade.lang.acl.ACLMessage;
 
-import java.util.concurrent.atomic.AtomicLong;
-
 public class ConventionalAgent extends Agent {
     // ------------------------ Parameters ------------------------
     private double margin = 0.05;
@@ -20,10 +18,6 @@ public class ConventionalAgent extends Agent {
     private double faultDuration = 0.0;
     private boolean isFaulty = false;
 
-    // order tracking
-    private static final AtomicLong SEQ = new AtomicLong();
-    private long openOrderId = -1;
-    
     @Override
     protected void setup() {
         register("conventional-producer");
@@ -66,14 +60,12 @@ public class ConventionalAgent extends Agent {
                 double price = lastPrice + margin;
                 
                 // send order
-                openOrderId = SEQ.incrementAndGet();
-
                 ACLMessage order = new ACLMessage(ACLMessage.PROPOSE);
                 order.addReceiver(new AID("broker", AID.ISLOCALNAME));
                 order.setOntology("ORDER");
-                order.setContent("id="+openOrderId+";side=sell;qty="+Double.POSITIVE_INFINITY+";price="+price);
+                order.setContent("qty="+Double.POSITIVE_INFINITY+";price="+price+";side=sell");
                 send(order);
-                if(DebuggingMode) System.out.printf("%s >> SELL ORDER id=%d <inf> kWh @ %.3f%n", getLocalName(), openOrderId, price);
+                if(DebuggingMode) System.out.printf("%s >> SELL ORDER <inf> kWh @ %.3f%n", getLocalName(), price);
             }
         });
     }
@@ -83,11 +75,11 @@ public class ConventionalAgent extends Agent {
         String content = msg.getContent();
         String [] tokens = content.split(";");
         long id = Long.parseLong(tokens[0].split("=")[1]);
-        if(id != openOrderId) return; // ignore old fills
+
         double qty = Double.parseDouble(tokens[1].split("=")[1]);
         double price = Double.parseDouble(tokens[2].split("=")[1]);
         String from = tokens[3].split("=")[1];
-        if(DebuggingMode) System.out.printf("%s >> FILLED %.1f kWh @ %.3f (backup) from %s%n", getLocalName(), qty, price, from);
+        if(DebuggingMode) System.out.printf("%s >> FILLED order id=%d %.1f kWh @ %.3f (backup) from %s%n", getLocalName(), id, qty, price, from);
     }
 
     private void onInform(ACLMessage msg) {
