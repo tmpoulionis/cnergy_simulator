@@ -10,10 +10,11 @@ import jade.domain.FIPAAgentManagement.ServiceDescription;
 import jade.lang.acl.ACLMessage;
 
 import java.util.*;
-
+import java.util.concurrent.atomic.AtomicLong;
 public class BrokerAgent extends Agent {
 
     // ------------------------ Parameters ------------------------
+    private int expiryTicks = 3;
     private boolean DebuggingMode = true; // Debug Mode
     // ------------------------- Internal state ------------------------
     private static class Order {
@@ -23,13 +24,9 @@ public class BrokerAgent extends Agent {
         double price;
         boolean seller;
         int expiry;
-        Order(long Id, AID o, double q, double p, boolean sell, int exp) {id=Id; owner=o; qty=q; price=p; seller=sell;}
+        Order(long Id, AID o, double q, double p, boolean sell, int exp) {id=Id; owner=o; qty=q; price=p; seller=sell; expiry=exp;}
     }
     
-    private final Map<Long, Order> orderBook = new HashMap<>();
-    private double lastPrice = 0.06;
-    private int tick = 0;
-
     // priority queues
     private final PriorityQueue<Order> bids = new PriorityQueue<>(
         (a,b) -> {
@@ -44,11 +41,18 @@ public class BrokerAgent extends Agent {
         }
     );
 
+    // order tracking
+    private AtomicLong SEQ = new AtomicLong();
+    private final Map<Long, Order> orderBook = new HashMap<>();
+    private double lastPrice = 0.06;
+    private int tick = 0;
+
     @Override
     protected void setup() {
         register("broker");
         Object[] args = getArguments();
         if (args != null && args.length > 0) {
+            expiryTicks = Integer.parseInt(args[0].toString());
             DebuggingMode = Boolean.parseBoolean(args[0].toString());
         }
         System.out.printf("- [%s] (operator) up! %n", getLocalName());
@@ -58,9 +62,9 @@ public class BrokerAgent extends Agent {
             public void action() {
                 ACLMessage msg = receive();
                 if (msg == null) { block(); return;}
-
-                switch (msg.getPerformative()) {
-                    case ACLMessage.PROPOSE: {addOrder(msg); match(); break;}
+                if (msg.getPerformative() == ACLMessage.PROPOSE) {
+                    addOrder(msg);
+                    match();
                 }
             }
         });
@@ -78,14 +82,34 @@ public class BrokerAgent extends Agent {
         String content = msg.getContent();
         String [] tokens = content.split(";");
 
-        long id = Long.parseLong(tokens[0].split("=")[1]);
-        boolean seller = tokens[1].contains("side=sell");
-        double qty = Double.parseDouble(tokens[2].split("=")[1]);
-        double price = Double.parseDouble(tokens[3].split("=")[1]);
-        int expiry = tick + 1;
+        double qty = Double.parseDouble(tokens[0].split("=")[1]);
+        double price = Double.parseDouble(tokens[1].split("=")[1]);
+        boolean seller = content.contains("side=sell");
+
+        long id = SEQ.incrementAndGet();
+        int expiry = tick + expiryTicks;
 
         Order order = new Order(id, msg.getSender(), qty, price, seller, expiry);
         orderBook.put(id, order);
+        if (seller) {
+            asks.add(order);
+        } else {
+            bids.add(order);
+        }
+
+        // --- forward to GUI (safe) ---
+        ACLMessage gui = new ACLMessage(ACLMessage.INFORM);   // create new message
+        gui.addReceiver(new AID("gui", AID.ISLOCALNAME));
+        gui.setOntology("ORDER");
+        gui.setContent(String.format(
+            "id=%d;side=%s;qty=%s;price=%s;from=%s",
+            id,
+            seller ? "sell" : "buy",
+            qty,                         // always a number, never “Infinity”
+            price,
+            msg.getSender().getLocalName()));
+        send(gui);
+
         if(DebuggingMode) System.out.printf("%s >> NEW %s ORDER id=%d %.1f @ %.3f from %s %n", getLocalName(), seller ? "SELL":"BUY", id, qty, price, msg.getSender().getLocalName());
     }
 
@@ -99,7 +123,18 @@ public class BrokerAgent extends Agent {
                 rej.setOntology("ORDER");
                 rej.setContent("id="+order.id);
                 send(rej);
+
                 it.remove();
+                if (order.seller) {asks.remove(order);}
+                else {bids.remove(order);}
+                
+                // notify the GUI so it can drop the row 
+                ACLMessage gui = new ACLMessage(ACLMessage.INFORM);
+                gui.addReceiver(new AID("gui", AID.ISLOCALNAME));
+                gui.setOntology("ORDER_REMOVE");
+                gui.setContent("id=" + order.id);
+                send(gui);
+
                 if(DebuggingMode) System.out.printf("%s >> ORDER EXPIRED -> %s - id=%d %n",getLocalName(), order.owner.getLocalName(), order.id);
             }
         }
@@ -121,14 +156,33 @@ public class BrokerAgent extends Agent {
             ACLMessage log = new ACLMessage(ACLMessage.INFORM);
             log.addReceiver(new AID("gui", AID.ISLOCALNAME));
             log.setOntology("TRADE_LOG");
-            log.setContent("seller="+sell.owner+";buyer="+buy.owner+";qty="+qty+";price="+lastPrice);
+            log.setContent("seller="+sell.owner.getLocalName()+";buyer="+buy.owner.getLocalName()+";qty="+qty+";price="+lastPrice);
             send(log);
 
             // update order book
             buy.qty -= qty;
             sell.qty -= qty;
-            if(buy.qty <= 1e-6) {bids.poll(); orderBook.remove(buy.id);} // poll, removes the front element
-            if(sell.qty <= 1e-6) {asks.poll(); orderBook.remove(sell.id);}
+            if(buy.qty <= 1e-6) {
+                bids.poll(); 
+                orderBook.remove(buy.id);
+
+                ACLMessage msg = new ACLMessage(ACLMessage.INFORM);
+                msg.addReceiver(new AID("gui", AID.ISLOCALNAME));
+                msg.setOntology("ORDER_REMOVE");
+                msg.setContent("id="+buy.id);
+                send(msg);
+            } // poll, removes the front element
+
+            if(sell.qty <= 1e-6) {
+                asks.poll(); 
+                orderBook.remove(sell.id);
+
+                ACLMessage msg = new ACLMessage(ACLMessage.INFORM);
+                msg.addReceiver(new AID("gui", AID.ISLOCALNAME));
+                msg.setOntology("ORDER_REMOVE");
+                msg.setContent("id="+sell.id);
+                send(msg);
+            }
         }
         broadcastPrice();
     }
@@ -140,7 +194,7 @@ public class BrokerAgent extends Agent {
         msg.setOntology("ORDER");
         msg.setContent("id="+order.id+";qty="+qty+";price="+price+";from="+from.getLocalName());
         send(msg);
-        if(DebuggingMode) System.out.printf("%s >> SENDING FILL to %s id=%d %1.f @ %.3f from %s", getLocalName(), order.owner.getLocalName(), order.id, qty, price, from.getLocalName());
+        if(DebuggingMode) System.out.printf("%s >> SENDING FILL to %s id=%d %.1f @ %.3f from %s%n", getLocalName(), order.owner.getLocalName(), order.id, qty, price, from.getLocalName());
     }
 
     private void broadcastPrice() {

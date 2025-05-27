@@ -1,1 +1,1 @@
-http://host.docker.internal:7778/acc
+http://DESKTOP-NCR3HMT.station:7778/acc

@@ -43,9 +43,10 @@ public class WeatherAgent extends Agent {
 
                 ACLMessage msg = new ACLMessage(ACLMessage.INFORM);
                 msg.setOntology("WEATHER");
-                msg.setContent("SUN="+solarToken+";WIND="+windToken+";TIME="+timeToken);
+                msg.setContent("SUN="+solarToken+";WIND="+windToken+";TIME="+timeToken+";hour="+hour);
                 search("solar-producer").forEach(msg::addReceiver);
                 search("wind-producer").forEach(msg::addReceiver);
+                msg.addReceiver(new AID("gui", AID.ISLOCALNAME));
                 send(msg);
             }
         });

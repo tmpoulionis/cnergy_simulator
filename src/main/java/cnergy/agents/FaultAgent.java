@@ -50,6 +50,12 @@ public class FaultAgent extends Agent {
                 msg.addReceiver(victim);
                 send(msg);
                 /*DEBUG*/ if (DebuggingMode == true) { System.out.printf("%s - Fault injected on %s for %d ticks%n", getLocalName(), victim.getLocalName(), faultDuration); }
+
+                ACLMessage g = new ACLMessage(ACLMessage.INFORM);
+                g.addReceiver(new AID("gui", AID.ISLOCALNAME));
+                g.setOntology("FAULT");
+                g.setContent("outage="+faultDuration+";victim="+victim.getLocalName());
+                send(g);
                 }
             });
     }

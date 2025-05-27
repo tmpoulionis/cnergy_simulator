@@ -66,6 +66,14 @@ public class ConventionalAgent extends Agent {
                 order.setContent("qty="+Double.POSITIVE_INFINITY+";price="+price+";side=sell");
                 send(order);
                 if(DebuggingMode) System.out.printf("%s >> SELL ORDER <inf> kWh @ %.3f%n", getLocalName(), price);
+
+                ACLMessage gui = new ACLMessage(ACLMessage.INFORM);
+                gui.addReceiver(new AID("gui", AID.ISLOCALNAME));
+                gui.setOntology("PRODUCER_STATUS");
+                gui.setContent("name="+getLocalName()
+                        +";prod="+Double.POSITIVE_INFINITY
+                        +";fault="+isFaulty);
+                send(gui);
             }
         });
     }

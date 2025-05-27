@@ -19,9 +19,9 @@ public class WindAgent extends Agent {
 
     private double baseCost = 0.035; // euro/kWh
     private double margin = 0.005; // Initial margin
-    private double alpha = 0.03; // learning rate
+    private double alpha = 0.003; // learning rate
 
-    private boolean DebuggingMode = true; // Debug mode
+    private boolean DebuggingMode = false; // Debug mode
     
     // ------------------------- Internal state ------------------------
     private double production = 0.0; 
@@ -100,6 +100,15 @@ public class WindAgent extends Agent {
                 order.setContent("qty="+openQty+";price="+price+";side=sell");
                 send(order);
                 if(DebuggingMode) System.out.printf("%s >> SELL ORDER qty=%.2f kWh @ %.3f%n", getLocalName(), available, price);
+
+                ACLMessage gui = new ACLMessage(ACLMessage.INFORM);
+                gui.addReceiver(new AID("gui", AID.ISLOCALNAME));
+                gui.setOntology("PRODUCER_STATUS");
+                gui.setContent("name="+getLocalName()
+                        +";soc="+soc/battCapacity*100
+                        +";prod="+production
+                        +";fault="+isFaulty);
+                send(gui);
             }
         });
     }
@@ -141,9 +150,12 @@ public class WindAgent extends Agent {
         openQty -= qty;
         if (openQty < 1e-6) {openQty = 0;}
 
-        double util = qty / (qty + openQty + 1e-8);
-        margin += alpha * (0.9 - util);
-        margin = Math.max(-0.02, Math.min(0.02, margin));
+        // Remove energy taken from batteries 
+        soc -= qty - production; 
+        soc = Math.max(0, Math.min(soc, battCapacity));
+
+        margin += alpha*0.1;
+        margin = Math.min(margin, 0.1);
         if(DebuggingMode) System.out.printf("%s >> FILLED order id=%d %.1f kWh @ %.3f from %s | new margin %.3f%n", getLocalName(), id, qty, price, from, margin);
     }
 
@@ -153,6 +165,9 @@ public class WindAgent extends Agent {
         long id = Long.parseLong(tokens[0].split("=")[1]);
         soc = Math.min(battCapacity, soc + openQty);
         openQty=0;
+
+        margin -= alpha*0.1;
+        margin = Math.max(-0.02, margin);
         if(DebuggingMode) System.out.printf("%s >> REJECTED id=%d -> energy returned to battery (SoC=%.1f %.1f%%) %n", getLocalName(), id, soc, soc/battCapacity*100);
     }
 

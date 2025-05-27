@@ -1,1 +1,1 @@
-( ap-description  :name "CNERGY" :ap-services (set ( ap-service  :name fipa.mts.mtp.http.std :type fipa.mts.mtp.http.std :addresses (sequence http://host.docker.internal:7778/acc))))
+( ap-description  :name "CNERGY" :ap-services (set ( ap-service  :name fipa.mts.mtp.http.std :type fipa.mts.mtp.http.std :addresses (sequence http://DESKTOP-NCR3HMT.station:7778/acc))))
