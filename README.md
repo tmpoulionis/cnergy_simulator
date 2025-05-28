@@ -1,4 +1,4 @@
-# C-NERGY: City Hybrid Energy Network MAS for Management & Optimization
+# C-NERGY: Multi-Agent system for Decentralized Energy Market Simulation
 
 # **Abstract**
 
